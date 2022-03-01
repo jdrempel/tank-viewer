@@ -74,7 +74,7 @@ if __name__ == '__main__':
     tries = 0
     max_tries = args.max_tries
     success = False
-    while tries < 5:
+    while tries < max_tries:
         tries += 1
         if check_port_presence(port, tries):
             success = True
