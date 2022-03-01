@@ -18,8 +18,6 @@ else:
     from serial.tools import list_ports_posix as list_ports
 
 CRLF = bytes(bytearray([13, 10]))
-BAUD = 115200
-TIMEOUT = 1
 
 
 def configure_port(arg):
@@ -58,9 +56,9 @@ def configure_port(arg):
     return comports[selection][0]
 
 
-def check_port_presence(device, backoff, timeout):
+def check_port_presence(device, backoff, baud, timeout):
     try:
-        with Serial(device, BAUD, timeout=timeout) as s:
+        with Serial(device, baud, timeout=timeout) as s:
             s.write(b"0xabc123")
     except serial.PortNotOpenError:
         time.sleep(backoff)
@@ -79,6 +77,14 @@ if __name__ == "__main__":
         nargs=1,
         default=5,
         help="number of times to attempt a serial connection (default: 5)",
+    )
+    parser.add_argument(
+        "--baud",
+        dest="baud",
+        type=int,
+        nargs=1,
+        default=115200,
+        help="baud rate to use for the serial connection (default: 115200)",
     )
     parser.add_argument(
         "--timeout",
@@ -105,7 +111,7 @@ if __name__ == "__main__":
     success = False
     while tries < max_tries:
         tries += 1
-        if check_port_presence(port, tries, args.timeout):
+        if check_port_presence(port, tries, args.baud, args.timeout):
             success = True
             break
         print(f"Unable to communicate on port {port} ({tries}/{max_tries}")
@@ -116,7 +122,7 @@ if __name__ == "__main__":
         print(f"Max attempts reached, exiting...")
         exit(1)
 
-    with Serial(port, BAUD, timeout=args.timeout) as ser:
+    with Serial(port, args.baud, timeout=args.timeout) as ser:
         while True:
             try:
                 byte_stream.write(ser.read())
