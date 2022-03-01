@@ -1,4 +1,4 @@
-#!usr/bin/python3
+#!/usr/bin/python3
 
 from argparse import ArgumentParser
 from io import BytesIO
