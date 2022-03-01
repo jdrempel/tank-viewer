@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "tank-viewer"
+version = "0.1.0"
+description = "Visualizer for seed tank data from a chain of devices via an Arduino (UART)"
+authors = ["Jeremy Rempel <jeremy.rempel@usask.ca>"]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+matplotlib = "^3.5.1"
+serial = "^0.0.97"
+
+[tool.poetry.dev-dependencies]
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
