@@ -2,11 +2,15 @@
 
 from argparse import ArgumentParser
 from io import BytesIO
+import matplotlib.pyplot as plot
+from matplotlib.animation import FuncAnimation
+from random import randint
 import re as regex
 import serial
 from serial import Serial
 from sys import platform
 import time
+from threading import Thread
 
 if "linux" in platform:
     from serial.tools import list_ports_linux as list_ports
@@ -66,6 +70,20 @@ def check_port_presence(device, backoff, baud, timeout):
     return True
 
 
+def run_serial(p, cl_args):
+    with Serial(p, cl_args.baud, timeout=cl_args.timeout) as ser:
+        while True:
+            try:
+                byte_stream.write(ser.read())
+            except serial.SerialTimeoutException:
+                print(f"Connection with device on port {port} timed out, exiting...")
+                exit(1)
+            except serial.SerialException:
+                print(f"Connection lost on port {port}, exiting...")
+                exit(1)
+            plot.pause(0.1)
+
+
 if __name__ == "__main__":
 
     parser = ArgumentParser(description="Display tank weights in real time")
@@ -122,15 +140,37 @@ if __name__ == "__main__":
         print(f"Max attempts reached, exiting...")
         exit(1)
 
-    with Serial(port, args.baud, timeout=args.timeout) as ser:
-        while True:
-            try:
-                byte_stream.write(ser.read())
-            except serial.SerialTimeoutException:
-                print(f"Connection with device on port {port} timed out, exiting...")
-                exit(1)
-            except serial.SerialException:
-                print(f"Connection lost on port {port}, exiting...")
-                exit(1)
+    # PLOTTING STUFF
+    labels = [f"Tank {n}" for n in range(args.num_tanks)]
+    bar_width = 0.5
+
+    fig, ax = plot.subplots()
+
+    def animation(i):
+        data = [randint(2, 7) for _ in range(args.num_tanks)]
+        plot.cla()
+        plot.bar(list(range(args.num_tanks)), data)
+        # bars = ax.bar(list(range(args.num_tanks)), data, animated=True)
+        # return bars
+
+    anim = FuncAnimation(plot.gcf(), animation, interval=10)
+
+    ax.set_xlabel("Tank")
+    ax.set_ylabel("Mass (kg)")
+    ax.set_title("Air Seeder Tank Masses")
+
+    plot.xlim([0, args.num_tanks])
+    plot.ylim([0, 10])
+    plot.show(block=False)
+    plot.pause(0.1)
+
+    bg = fig.canvas.copy_from_bbox(fig.bbox)
+
+    serial_thread = Thread(target=run_serial, args=[port, args])
+    serial_thread.daemon = True
+    serial_thread.start()
+
+    while True:
+        plot.pause(0.1)
 
     pass
