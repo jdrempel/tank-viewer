@@ -2,15 +2,20 @@
 
 from argparse import ArgumentParser
 from io import BytesIO
+import matplotlib as mpl
 import matplotlib.pyplot as plot
 from matplotlib.animation import FuncAnimation
+from os import kill, getpid
 from random import randint
 import re as regex
 import serial
 from serial import Serial
+import signal
+import sys
 from sys import platform
+from tempfile import TemporaryFile
 import time
-from threading import Thread
+from threading import Thread, Event
 
 if "linux" in platform:
     from serial.tools import list_ports_linux as list_ports
@@ -22,6 +27,11 @@ else:
     from serial.tools import list_ports_posix as list_ports
 
 CRLF = bytes(bytearray([13, 10]))
+
+command = ""
+ev_command = Event()
+ev_quit_sig = Event()
+ev_quit_ack = Event()
 
 
 def configure_port(arg):
@@ -71,6 +81,7 @@ def check_port_presence(device, backoff, baud, timeout):
 
 
 def run_serial(p, cl_args):
+    global command
     with Serial(p, cl_args.baud, timeout=cl_args.timeout) as ser:
         while True:
             try:
@@ -81,10 +92,57 @@ def run_serial(p, cl_args):
             except serial.SerialException:
                 print(f"Connection lost on port {port}, exiting...")
                 exit(1)
-            plot.pause(0.1)
+
+            if ev_command.is_set():
+                ev_command.clear()
+                print("Reading command!")
+                print(command)
+                pass
+
+
+def run_command():
+    global command
+    state = "command"
+    while True:
+        if state == "command":
+            command = input(">> ")
+            if command == "quit":
+                ev_quit_sig.set()
+                ev_quit_ack.wait(1)
+                ev_quit_ack.clear()
+                kill(getpid(), signal.SIGKILL)
+            elif command == "tare":
+                print("Okay, taring...")
+                pass
+            elif command == "zero":
+                print("Okay, starting the zero process...")
+                state = "zero-1"
+                pass
+            elif command == "reset":
+                print("Okay, resetting the Arduino...")
+                pass
+            else:
+                print(f'Invalid command: "{command}"')
+                pass
+        elif state == "zero-1":
+            command = input("Mass 1 (kg) >> ")
+            state = "zero-2"
+            pass
+        elif state == "zero-2":
+            command = input("Mass 2 (kg) >> ")
+            state = "command"
+            print("Finished zeroing.")
+            pass
 
 
 if __name__ == "__main__":
+
+    # This is to prevent really annoying errors cropping up in the command-line from libtk
+    # It likes to complain about threading even though it is running on the main thread :eye-roll:
+    if "linux" in platform or "darwin" in platform:
+        sys.stderr = open("log.txt", "w")
+    elif "win32" in platform:
+        sys.stderr = TemporaryFile()
 
     parser = ArgumentParser(description="Display tank weights in real time")
     parser.add_argument("port", type=str, nargs="?")
@@ -141,12 +199,13 @@ if __name__ == "__main__":
         exit(1)
 
     # PLOTTING STUFF
+    mpl.style.use("seaborn-colorblind")
     labels = [f"Tank {n}" for n in range(args.num_tanks)]
     bar_width = 0.5
 
     fig, ax = plot.subplots()
 
-    def animation(i):
+    def animation(_):
         data = [randint(2, 7) for _ in range(args.num_tanks)]
         plot.cla()
         plot.bar(list(range(args.num_tanks)), data)
@@ -170,7 +229,15 @@ if __name__ == "__main__":
     serial_thread.daemon = True
     serial_thread.start()
 
+    command_thread = Thread(target=run_command)
+    command_thread.daemon = True
+    command_thread.start()
+
     while True:
         plot.pause(0.1)
+        if ev_quit_sig.is_set():
+            plot.close(fig)
+            ev_quit_sig.clear()
+            ev_quit_ack.set()
 
     pass

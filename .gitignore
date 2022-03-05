@@ -134,3 +134,4 @@ dmypy.json
 # Random
 *.swp
 poetry.lock
+log.txt
