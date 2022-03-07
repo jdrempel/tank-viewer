@@ -11,6 +11,7 @@ import re as regex
 import serial
 from serial import Serial
 import signal
+import struct
 import sys
 from sys import platform
 from tempfile import TemporaryFile
@@ -29,9 +30,29 @@ else:
 CRLF = bytes(bytearray([13, 10]))
 
 command = ""
+state = "command"
 ev_command = Event()
+ev_read_cmd = Event()
 ev_quit_sig = Event()
 ev_quit_ack = Event()
+
+
+def crc16_mcrf4xx(crc, data, length):
+    if not any(data) or length <= 0:
+        return crc
+
+    index = 0
+    while length >= 0:
+        crc ^= data[index]
+        L = crc ^ (crc << 4)
+        t = (L << 3) | (L >> 5)
+        L ^= (t & 0x07)
+        t = (t & 0xf8) ^ (((t << 1) | (t >> 7)) & 0x0f) ^ ((crc >> 8) & 0xff)
+        crc = (L << 8) | t
+        index += 1
+        length -= 1
+
+    return crc
 
 
 def configure_port(arg):
@@ -80,30 +101,96 @@ def check_port_presence(device, backoff, baud, timeout):
     return True
 
 
+def pack_754(f, bits, exp_bits):
+    significand_bits = bits - exp_bits - 1
+
+    if f == 0.0:
+        return 0
+
+    if f < 0:
+        sign = 1
+        fnorm = -f
+    else:
+        sign = 0
+        fnorm = f
+
+    shift = 0
+    while fnorm >= 2.0:
+        fnorm /= 2.0
+        shift += 1
+    while fnorm < 1.0:
+        fnorm *= 2.0
+        shift -= 1
+    fnorm -= 1.0
+
+    significand = fnorm * ((1 << significand_bits) + 0.5)
+
+    exp = shift + ((1 << (exp_bits - 1)) -1)
+
+    return (sign << (bits - 1)) | (exp << (bits - exp_bits - 1)) | significand
+
+
 def run_serial(p, cl_args):
     global command
+    global state
+
     with Serial(p, cl_args.baud, timeout=cl_args.timeout) as ser:
         while True:
             try:
                 byte_stream.write(ser.read())
+
             except serial.SerialTimeoutException:
                 print(f"Connection with device on port {port} timed out, exiting...")
                 exit(1)
+
             except serial.SerialException:
                 print(f"Connection lost on port {port}, exiting...")
                 exit(1)
 
             if ev_command.is_set():
                 ev_command.clear()
-                print("Reading command!")
-                print(command)
-                pass
+                data = []
+
+                if command == "tare":
+                    data.extend([bytes([0]), 0])
+
+                elif command == "zero":
+                    data.extend([bytes([1]), 0])
+
+                elif command == "reset":
+                    data.extend([bytes([2]), 0])
+
+                else:
+                    # A number related to zeroing
+                    if state == "zero-1":
+                        data.extend([bytes([4]), float(command)])
+
+                    elif state == "zero-2":
+                        data.extend([bytes([5]), float(command)])
+
+                    else:
+                        # Invalid input
+                        ev_read_cmd.set()
+                        continue
+
+                temp_buffer = struct.pack("cf", *data)
+                crc = crc16_mcrf4xx(0, temp_buffer, 2)
+                print(crc & 0xffff)
+                data.append(crc & 0xffff)
+
+                data.append(bytes([0]))
+
+                buffer = struct.pack("cfHc", *data)
+
+                ev_read_cmd.set()
+                ser.write(buffer)
 
 
-def run_command():
+def run_command(cl_args):
     global command
-    state = "command"
+    global state
     while True:
+        valid = False
         if state == "command":
             command = input(">> ")
             if command == "quit":
@@ -112,27 +199,42 @@ def run_command():
                 ev_quit_ack.clear()
                 kill(getpid(), signal.SIGKILL)
             elif command == "tare":
+                valid = True
                 print("Okay, taring...")
                 pass
             elif command == "zero":
+                valid = True
                 print("Okay, starting the zero process...")
                 state = "zero-1"
                 pass
             elif command == "reset":
+                valid = True
                 print("Okay, resetting the Arduino...")
                 pass
             else:
+                valid = False
                 print(f'Invalid command: "{command}"')
                 pass
         elif state == "zero-1":
             command = input("Mass 1 (kg) >> ")
+            valid = True
             state = "zero-2"
             pass
         elif state == "zero-2":
             command = input("Mass 2 (kg) >> ")
+            valid = True
             state = "command"
             print("Finished zeroing.")
             pass
+
+        if valid:
+            ev_command.set()
+            ev_read_cmd.wait(cl_args.timeout * 2)
+            ev_read_cmd.clear()
+            if state == "zero-1":
+                state = "zero-2"
+            elif state == "zero-2":
+                state = "command"
 
 
 if __name__ == "__main__":
@@ -229,7 +331,7 @@ if __name__ == "__main__":
     serial_thread.daemon = True
     serial_thread.start()
 
-    command_thread = Thread(target=run_command)
+    command_thread = Thread(target=run_command, args=[args, ])
     command_thread.daemon = True
     command_thread.start()
 
