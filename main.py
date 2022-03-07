@@ -80,6 +80,22 @@ def check_port_presence(device, backoff, baud, timeout):
     return True
 
 
+def crc_16_mcrf4xx(crc, data, length):
+    if not any(data) or length == 0:
+        return crc
+
+    i = 0
+    while i < length:
+        crc ^= data[i]
+        L = crc ^ (crc << 4)
+        t = (L << 3) | (L >> 5)
+        L ^= (t & 0x07)
+        t = (t & 0xf8) ^ (((t << 1) | (t >> 7)) & 0x0f) ^ (crc >> 8)
+        crc = (L << 8) | t
+        i += 1
+    return crc
+
+
 def run_serial(p, cl_args):
     global command
     with Serial(p, cl_args.baud, timeout=cl_args.timeout) as ser:
