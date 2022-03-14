@@ -42,8 +42,8 @@ def crc16_mcrf4xx(crc, data, length):
         return crc
 
     index = 0
-    while length >= 0:
-        crc ^= data[index]
+    while length > 0:
+        crc ^= ord(data[index])
         L = crc ^ (crc << 4)
         t = (L << 3) | (L >> 5)
         L ^= (t & 0x07)
@@ -137,7 +137,8 @@ def run_serial(p, cl_args):
     with Serial(p, cl_args.baud, timeout=cl_args.timeout) as ser:
         while True:
             try:
-                byte_stream.write(ser.read())
+                pass
+                # byte_stream.write(ser.read())
 
             except serial.SerialTimeoutException:
                 print(f"Connection with device on port {port} timed out, exiting...")
@@ -149,41 +150,36 @@ def run_serial(p, cl_args):
 
             if ev_command.is_set():
                 ev_command.clear()
-                data = []
+                data = ""
 
                 if command == "tare":
-                    data.extend([bytes([0]), 0])
+                    data = "T"
 
                 elif command == "zero":
-                    data.extend([bytes([1]), 0])
+                    data = "Z0"
 
                 elif command == "reset":
-                    data.extend([bytes([2]), 0])
+                    data = "R"
 
                 else:
                     # A number related to zeroing
                     if state == "zero-1":
-                        data.extend([bytes([4]), float(command)])
+                        data = f"Z1:{float(command)}"
 
                     elif state == "zero-2":
-                        data.extend([bytes([5]), float(command)])
+                        data = f"Z2:{float(command)}"
 
                     else:
                         # Invalid input
                         ev_read_cmd.set()
                         continue
 
-                temp_buffer = struct.pack("cf", *data)
-                crc = crc16_mcrf4xx(0, temp_buffer, 2)
-                print(crc & 0xffff)
-                data.append(crc & 0xffff)
-
-                data.append(bytes([0]))
-
-                buffer = struct.pack("cfHc", *data)
+                crc = crc16_mcrf4xx(0, data, len(data))
+                data += f"/{crc & 0xffff}\0"
+                print(data)
 
                 ev_read_cmd.set()
-                ser.write(buffer)
+                ser.write(data)
 
 
 def run_command(cl_args):
