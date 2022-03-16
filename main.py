@@ -11,7 +11,6 @@ import re as regex
 import serial
 from serial import Serial
 import signal
-import struct
 import sys
 from sys import platform
 from tempfile import TemporaryFile
@@ -137,7 +136,7 @@ def run_serial(p, cl_args):
     with Serial(p, cl_args.baud, timeout=cl_args.timeout) as ser:
         while True:
             try:
-                pass
+                print(str(ser.readline()))
                 # byte_stream.write(ser.read())
 
             except serial.SerialTimeoutException:
@@ -175,11 +174,13 @@ def run_serial(p, cl_args):
                         continue
 
                 crc = crc16_mcrf4xx(0, data, len(data))
-                data += f"/{crc & 0xffff}\0"
+                data += f"/{crc & 0xffff};"
                 print(data)
 
                 ev_read_cmd.set()
-                ser.write(data)
+                ser.write(data.encode())
+            else:
+                print(".")
 
 
 def run_command(cl_args):
@@ -194,16 +195,16 @@ def run_command(cl_args):
                 ev_quit_ack.wait(1)
                 ev_quit_ack.clear()
                 kill(getpid(), signal.SIGKILL)
-            elif command == "tare":
+            elif command == "t":
                 valid = True
                 print("Okay, taring...")
                 pass
-            elif command == "zero":
+            elif command == "z":
                 valid = True
                 print("Okay, starting the zero process...")
                 state = "zero-1"
                 pass
-            elif command == "reset":
+            elif command == "r":
                 valid = True
                 print("Okay, resetting the Arduino...")
                 pass
@@ -257,7 +258,7 @@ if __name__ == "__main__":
         dest="baud",
         type=int,
         nargs=1,
-        default=115200,
+        default=19200,
         help="baud rate to use for the serial connection (default: 115200)",
     )
     parser.add_argument(
@@ -265,7 +266,7 @@ if __name__ == "__main__":
         dest="timeout",
         type=float,
         nargs=1,
-        default=1.0,
+        default=0.5,
         help="length of time in seconds to wait on serial connection before aborting (default: 1)",
     )
     parser.add_argument(
@@ -297,31 +298,31 @@ if __name__ == "__main__":
         exit(1)
 
     # PLOTTING STUFF
-    mpl.style.use("seaborn-colorblind")
-    labels = [f"Tank {n}" for n in range(args.num_tanks)]
-    bar_width = 0.5
+    # mpl.style.use("seaborn-colorblind")
+    # labels = [f"Tank {n}" for n in range(args.num_tanks)]
+    # bar_width = 0.5
 
-    fig, ax = plot.subplots()
+    # fig, ax = plot.subplots()
 
-    def animation(_):
-        data = [randint(2, 7) for _ in range(args.num_tanks)]
-        plot.cla()
-        plot.bar(list(range(args.num_tanks)), data)
-        # bars = ax.bar(list(range(args.num_tanks)), data, animated=True)
-        # return bars
+    # def animation(_):
+    #     data = [randint(2, 7) for _ in range(args.num_tanks)]
+    #     plot.cla()
+    #     plot.bar(list(range(args.num_tanks)), data)
+    #     # bars = ax.bar(list(range(args.num_tanks)), data, animated=True)
+    #     # return bars
 
-    anim = FuncAnimation(plot.gcf(), animation, interval=10)
+    # anim = FuncAnimation(plot.gcf(), animation, interval=10)
 
-    ax.set_xlabel("Tank")
-    ax.set_ylabel("Mass (kg)")
-    ax.set_title("Air Seeder Tank Masses")
+    # ax.set_xlabel("Tank")
+    # ax.set_ylabel("Mass (kg)")
+    # ax.set_title("Air Seeder Tank Masses")
 
-    plot.xlim([0, args.num_tanks])
-    plot.ylim([0, 10])
-    plot.show(block=False)
-    plot.pause(0.1)
+    # plot.xlim([0, args.num_tanks])
+    # plot.ylim([0, 10])
+    # plot.show(block=False)
+    # plot.pause(0.1)
 
-    bg = fig.canvas.copy_from_bbox(fig.bbox)
+    # bg = fig.canvas.copy_from_bbox(fig.bbox)
 
     serial_thread = Thread(target=run_serial, args=[port, args])
     serial_thread.daemon = True
@@ -332,10 +333,11 @@ if __name__ == "__main__":
     command_thread.start()
 
     while True:
-        plot.pause(0.1)
+        # plot.pause(0.1)
         if ev_quit_sig.is_set():
-            plot.close(fig)
+            # plot.close(fig)
             ev_quit_sig.clear()
             ev_quit_ack.set()
+        pass
 
     pass
