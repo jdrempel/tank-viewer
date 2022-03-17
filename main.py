@@ -29,7 +29,8 @@ else:
 CRLF = bytes(bytearray([13, 10]))
 
 command = ""
-state = "command"
+data = ""
+massData = 0
 ev_command = Event()
 ev_read_cmd = Event()
 ev_quit_sig = Event()
@@ -56,9 +57,9 @@ def crc16_mcrf4xx(crc, data, length):
 
 def configure_port(arg):
     comports = [tuple(p) for p in list(list_ports.comports())]
-    comports = [
-        c for c in comports if regex.match(r"(.*Ard.*)|(.*Ser.*)", f"{c[1]} {c[2]}")
-    ]
+    # comports = [
+    #     c for c in comports if regex.match(r"(.*Ard.*)|(.*Ser.*)", f"{c[1]} {c[2]}")
+    # ]
 
     if len(comports) == 0:
         print("No available ports found, exiting...")
@@ -131,13 +132,19 @@ def pack_754(f, bits, exp_bits):
 
 def run_serial(p, cl_args):
     global command
-    global state
+    global data
+    global massData
 
     with Serial(p, cl_args.baud, timeout=cl_args.timeout) as ser:
         while True:
             try:
-                print(str(ser.readline()))
-                # byte_stream.write(ser.read())
+                arduinoOutput = str(ser.readline().decode())
+                if arduinoOutput != "":
+                    # print(arduinoOutput)
+                    try:
+                        massData = float(arduinoOutput.split(" ")[-1])
+                    except:
+                        pass
 
             except serial.SerialTimeoutException:
                 print(f"Connection with device on port {port} timed out, exiting...")
@@ -147,92 +154,55 @@ def run_serial(p, cl_args):
                 print(f"Connection lost on port {port}, exiting...")
                 exit(1)
 
-            if ev_command.is_set():
+            if ev_command.is_set(): # wait for command
                 ev_command.clear()
-                data = ""
+                message = f"{command}:{data}\n"
 
-                if command == "tare":
-                    data = "T"
+                print("Message:", message)
 
-                elif command == "zero":
-                    data = "Z0"
-
-                elif command == "reset":
-                    data = "R"
-
-                else:
-                    # A number related to zeroing
-                    if state == "zero-1":
-                        data = f"Z1:{float(command)}"
-
-                    elif state == "zero-2":
-                        data = f"Z2:{float(command)}"
-
-                    else:
-                        # Invalid input
-                        ev_read_cmd.set()
-                        continue
-
-                crc = crc16_mcrf4xx(0, data, len(data))
-                data += f"/{crc & 0xffff};"
-                print(data)
-
-                ev_read_cmd.set()
-                ser.write(data.encode())
-            else:
-                print(".")
+                ev_read_cmd.set() # enable command input again
+                ser.write(message.encode())
 
 
 def run_command(cl_args):
     global command
-    global state
+    global data
+
     while True:
         valid = False
-        if state == "command":
-            command = input(">> ")
-            if command == "quit":
-                ev_quit_sig.set()
-                ev_quit_ack.wait(1)
-                ev_quit_ack.clear()
-                kill(getpid(), signal.SIGKILL)
-            elif command == "t":
-                valid = True
-                print("Okay, taring...")
-                pass
-            elif command == "z":
-                valid = True
-                print("Okay, starting the zero process...")
-                state = "zero-1"
-                pass
-            elif command == "r":
-                valid = True
-                print("Okay, resetting the Arduino...")
-                pass
-            else:
-                valid = False
-                print(f'Invalid command: "{command}"')
-                pass
-        elif state == "zero-1":
-            command = input("Mass 1 (kg) >> ")
+        command = input(">> ")
+        if command == "quit":
+            ev_quit_sig.set()
+            ev_quit_ack.wait(1)
+            ev_quit_ack.clear()
+            kill(getpid(), signal.SIGKILL)
+        elif command == "t":
             valid = True
-            state = "zero-2"
-            pass
-        elif state == "zero-2":
-            command = input("Mass 2 (kg) >> ")
+            print("Okay, taring...")
+            data = ""
+        elif command == "c1":
             valid = True
-            state = "command"
-            print("Finished zeroing.")
-            pass
+            print("Okay, entering phase 1 of the calibration process...")
+            data = input("Mass 1 (kg) >> ")
+        elif command == "c2":
+            valid = True
+            print("Okay, entering phase 2 of the calibration process...")
+            data = input("Mass 2 (kg) >> ")
+        elif command == "c3":
+            valid = True
+            print("Okay, finishing up calibration...")
+            data = ""
+        elif command == "r":
+            valid = True
+            print("Okay, resetting the Arduino...")
+            data = ""
+        else:
+            print(f'Invalid command: "{command}"')
 
         if valid:
             ev_command.set()
             ev_read_cmd.wait(cl_args.timeout * 2)
             ev_read_cmd.clear()
-            if state == "zero-1":
-                state = "zero-2"
-            elif state == "zero-2":
-                state = "command"
-
 
 if __name__ == "__main__":
 
@@ -241,7 +211,8 @@ if __name__ == "__main__":
     if "linux" in platform or "darwin" in platform:
         sys.stderr = open("log.txt", "w")
     elif "win32" in platform:
-        sys.stderr = TemporaryFile()
+        pass
+        # sys.stderr = TemporaryFile()
 
     parser = ArgumentParser(description="Display tank weights in real time")
     parser.add_argument("port", type=str, nargs="?")
@@ -258,8 +229,8 @@ if __name__ == "__main__":
         dest="baud",
         type=int,
         nargs=1,
-        default=19200,
-        help="baud rate to use for the serial connection (default: 115200)",
+        default=9600,
+        help="baud rate to use for the serial connection (default: 19200)",
     )
     parser.add_argument(
         "--timeout",
@@ -273,7 +244,7 @@ if __name__ == "__main__":
         "--num-tanks",
         dest="num_tanks",
         nargs=1,
-        default=5,
+        default=1,
         help="number of presented air seeder tanks (default: 5)",
     )
     args = parser.parse_args()
@@ -292,37 +263,38 @@ if __name__ == "__main__":
         print(f"Unable to communicate on port {port} ({tries}/{max_tries}")
 
     if success:
-        print(f"Established communication with device on port {port}")
+        print(f"Established communication with device on port {port} with baud rate {args.baud}")
     else:
         print(f"Max attempts reached, exiting...")
         exit(1)
 
     # PLOTTING STUFF
-    # mpl.style.use("seaborn-colorblind")
-    # labels = [f"Tank {n}" for n in range(args.num_tanks)]
-    # bar_width = 0.5
+    mpl.style.use("seaborn-colorblind")
+    labels = [f"Tank {n}" for n in range(args.num_tanks)]
+    bar_width = 0.5
 
-    # fig, ax = plot.subplots()
+    fig, ax = plot.subplots(figsize=(10,10))
 
-    # def animation(_):
-    #     data = [randint(2, 7) for _ in range(args.num_tanks)]
-    #     plot.cla()
-    #     plot.bar(list(range(args.num_tanks)), data)
-    #     # bars = ax.bar(list(range(args.num_tanks)), data, animated=True)
-    #     # return bars
+    def animation(_):
+        global massData
+        data = [massData for _ in range(args.num_tanks)]
+        plot.cla()
+        plot.bar(list(range(args.num_tanks)), data)
+        ax.set_ylim(bottom=0, top=30)
+        ax.set_xlabel("Tank")
+        ax.set_ylabel("Mass (kg)")
+        ax.set_title("Air Seeder Tank Masses")
+        plot.xticks([], "")
 
-    # anim = FuncAnimation(plot.gcf(), animation, interval=10)
+    anim = FuncAnimation(plot.gcf(), animation, interval=10)
 
-    # ax.set_xlabel("Tank")
-    # ax.set_ylabel("Mass (kg)")
-    # ax.set_title("Air Seeder Tank Masses")
 
-    # plot.xlim([0, args.num_tanks])
-    # plot.ylim([0, 10])
-    # plot.show(block=False)
-    # plot.pause(0.1)
 
-    # bg = fig.canvas.copy_from_bbox(fig.bbox)
+    ax.set_ylim(bottom=0, top=55)
+    plot.show(block=False)
+    plot.pause(0.1)
+
+    bg = fig.canvas.copy_from_bbox(fig.bbox)
 
     serial_thread = Thread(target=run_serial, args=[port, args])
     serial_thread.daemon = True
@@ -333,9 +305,9 @@ if __name__ == "__main__":
     command_thread.start()
 
     while True:
-        # plot.pause(0.1)
+        plot.pause(0.1)
         if ev_quit_sig.is_set():
-            # plot.close(fig)
+            plot.close(fig)
             ev_quit_sig.clear()
             ev_quit_ack.set()
         pass
