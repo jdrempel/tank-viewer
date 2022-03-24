@@ -30,7 +30,9 @@ CRLF = bytes(bytearray([13, 10]))
 
 command = ""
 data = ""
-massData = 0
+tankNumber = ""
+dataUpdate = [0.0, 0.0]
+
 ev_command = Event()
 ev_read_cmd = Event()
 ev_quit_sig = Event()
@@ -132,17 +134,24 @@ def pack_754(f, bits, exp_bits):
 
 def run_serial(p, cl_args):
     global command
+    global dataUpdate
     global data
-    global massData
+    global tankNumber
 
     with Serial(p, cl_args.baud, timeout=cl_args.timeout) as ser:
         while True:
             try:
-                arduinoOutput = str(ser.readline().decode())
+                arduinoOutput = str(ser.readline().decode(errors="ignore"))
                 if arduinoOutput != "":
                     # print(arduinoOutput)
                     try:
-                        massData = float(arduinoOutput.split(" ")[-1])
+                        outputParsed = arduinoOutput[1:-1]
+                        outputParsed = outputParsed.split(";")
+                        tank = outputParsed[0]
+                        dataRec = outputParsed[1]
+                        tankNo = int(tank.split(":")[1])
+                        dataNo = float(dataRec.split(":")[1])
+                        dataUpdate[tankNo] = dataNo
                     except:
                         pass
 
@@ -156,7 +165,10 @@ def run_serial(p, cl_args):
 
             if ev_command.is_set(): # wait for command
                 ev_command.clear()
-                message = f"{command}:{data}\n"
+                if command == "c1" or command == "c2":
+                    message = f"{command}({tankNumber}):{data}\n"
+                else:
+                    message = f"{command}({tankNumber})\n"
 
                 print("Message:", message)
 
@@ -167,6 +179,7 @@ def run_serial(p, cl_args):
 def run_command(cl_args):
     global command
     global data
+    global tankNumber
 
     while True:
         valid = False
@@ -179,23 +192,28 @@ def run_command(cl_args):
         elif command == "t":
             valid = True
             print("Okay, taring...")
+            tankNumber = input("Tank number >> ")
             data = ""
         elif command == "c1":
             valid = True
             print("Okay, entering phase 1 of the calibration process...")
-            data = input("Mass 1 (kg) >> ")
+            tankNumber = input("Tank number >> ")
+            data = input("Mass 1 (lb) >> ")
         elif command == "c2":
             valid = True
             print("Okay, entering phase 2 of the calibration process...")
-            data = input("Mass 2 (kg) >> ")
+            tankNumber = input("Tank number >> ")
+            data = input("Mass 2 (lb) >> ")
         elif command == "c3":
             valid = True
-            print("Okay, finishing up calibration...")
+            print("Okay, entering phase 3 of the calibration process...")
             data = ""
+            tankNumber = input("Tank number >> ")
         elif command == "r":
             valid = True
             print("Okay, resetting the Arduino...")
             data = ""
+            tankNumber = input("Tank number >> ")
         else:
             print(f'Invalid command: "{command}"')
 
@@ -229,7 +247,7 @@ if __name__ == "__main__":
         dest="baud",
         type=int,
         nargs=1,
-        default=9600,
+        default=19200,
         help="baud rate to use for the serial connection (default: 19200)",
     )
     parser.add_argument(
@@ -244,7 +262,7 @@ if __name__ == "__main__":
         "--num-tanks",
         dest="num_tanks",
         nargs=1,
-        default=1,
+        default=2,
         help="number of presented air seeder tanks (default: 5)",
     )
     args = parser.parse_args()
@@ -276,15 +294,16 @@ if __name__ == "__main__":
     fig, ax = plot.subplots(figsize=(10,10))
 
     def animation(_):
-        global massData
-        data = [massData for _ in range(args.num_tanks)]
+        global dataUpdate
+        # data = [massData for _ in range(args.num_tanks)]
         plot.cla()
-        plot.bar(list(range(args.num_tanks)), data)
+        plot.bar(list(range(args.num_tanks)), dataUpdate)
         ax.set_ylim(bottom=0, top=30)
-        ax.set_xlabel("Tank")
-        ax.set_ylabel("Mass (kg)")
-        ax.set_title("Air Seeder Tank Masses")
-        plot.xticks([], "")
+        ax.set_xlabel("Tanks")
+        ax.set_ylabel("Mass (lb)")
+        ax.set_title("Air Seeder Tank Mass")
+        plot.xticks([0, 1], ["0", "1"])
+
 
     anim = FuncAnimation(plot.gcf(), animation, interval=10)
 
